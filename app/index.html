@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="A current overview of project progress, ownership, and priorities.">
+    <title>Project Pulse</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="./" aria-label="Project Pulse home">
+        <span class="brand-mark" aria-hidden="true">P</span>
+        <span>Project Pulse</span>
+      </a>
+      <span class="header-meta">A clear view of work in progress</span>
+    </header>
+
+    <main class="dashboard">
+      <section class="dashboard-intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Team overview</p>
+          <h1 id="page-title">Keep every project moving.</h1>
+          <p class="dashboard-lede">A quick look at project health, ownership, and the latest team activity.</p>
+        </div>
+      </section>
+
+      <section class="summary" aria-label="Project metrics" aria-live="polite">
+        <div class="summary-item">
+          <span class="summary-label">Total projects</span>
+          <span class="summary-value" id="metric-total">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">On track</span>
+          <span class="summary-value" id="metric-on-track">—</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">Need attention</span>
+          <span class="summary-value" id="metric-attention">—</span>
+        </div>
+      </section>
+
+      <section aria-labelledby="projects-heading">
+        <div class="section-heading">
+          <h2 id="projects-heading">Projects</h2>
+          <p id="projects-caption">Loading project updates…</p>
+        </div>
+        <div id="projects-content" aria-live="polite" aria-busy="true">
+          <div class="state state--loading" role="status">
+            <h2>Loading projects</h2>
+            <p>Fetching the latest project updates.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script>
+      const content = document.querySelector("#projects-content");
+      const caption = document.querySelector("#projects-caption");
+      const totalMetric = document.querySelector("#metric-total");
+      const onTrackMetric = document.querySelector("#metric-on-track");
+      const attentionMetric = document.querySelector("#metric-attention");
+      const allowedStatuses = new Set(["on-track", "at-risk", "blocked", "planning"]);
+      const allowedPriorities = new Set(["low", "medium", "high", "critical"]);
+
+      function showState(kind, heading, message) {
+        const state = document.createElement("div");
+        state.className = `state state--${kind}`;
+        if (kind === "error") state.setAttribute("role", "alert");
+        else state.setAttribute("role", "status");
+
+        const title = document.createElement("h2");
+        title.textContent = heading;
+        const description = document.createElement("p");
+        description.textContent = message;
+        state.append(title, description);
+        content.replaceChildren(state);
+      }
+
+      function isRecord(project) {
+        return project !== null &&
+          typeof project === "object" &&
+          !Array.isArray(project) &&
+          ["name", "owner", "status", "recentActivity", "priority"].every(
+            (field) => typeof project[field] === "string" && project[field].trim().length > 0
+          ) &&
+          allowedStatuses.has(project.status.toLowerCase()) &&
+          allowedPriorities.has(project.priority.toLowerCase()) &&
+          (project.summary === undefined || typeof project.summary === "string");
+      }
+
+      function displayLabel(value) {
+        return value.replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+      }
+
+      function makeTextElement(tagName, className, text) {
+        const element = document.createElement(tagName);
+        element.className = className;
+        element.textContent = text;
+        return element;
+      }
+
+      function makeProjectCard(project) {
+        const card = document.createElement("article");
+        card.className = "project-card";
+
+        const header = document.createElement("div");
+        header.className = "project-card-header";
+        const details = document.createElement("div");
+        details.append(
+          makeTextElement("h3", "", project.name),
+          makeTextElement("p", "project-owner", `Owner: ${project.owner}`)
+        );
+        const statusValue = project.status.toLowerCase();
+        const status = makeTextElement("span", `status status--${statusValue}`, displayLabel(project.status));
+        status.dataset.status = statusValue;
+        status.setAttribute("aria-label", `Status: ${displayLabel(project.status)}`);
+        header.append(details, status);
+        card.append(header);
+
+        if (project.summary) {
+          card.append(makeTextElement("p", "project-summary", project.summary));
+        }
+
+        const activity = document.createElement("p");
+        activity.className = "recent-activity";
+        activity.append(
+          makeTextElement("span", "recent-activity-label", "Recent activity:"),
+          document.createTextNode(` ${project.recentActivity}`)
+        );
+        card.append(activity);
+
+        const priorityValue = project.priority.toLowerCase();
+        const priority = makeTextElement("span", `priority priority--${priorityValue}`, `Priority: ${displayLabel(project.priority)}`);
+        priority.dataset.priority = priorityValue;
+        card.append(priority);
+        return card;
+      }
+
+      async function loadProjects() {
+        try {
+          const response = await fetch("project-data.json", { cache: "no-store" });
+          if (!response.ok) {
+            throw new Error(`Project data request failed with HTTP ${response.status}.`);
+          }
+
+          let data;
+          try {
+            data = await response.json();
+          } catch {
+            throw new Error("Project data is not valid JSON.");
+          }
+
+          if (
+            data === null ||
+            typeof data !== "object" ||
+            !Array.isArray(data.projects) ||
+            !data.projects.every(isRecord)
+          ) {
+            throw new Error("Project data must contain a projects array with complete, supported project records.");
+          }
+
+          totalMetric.textContent = String(data.projects.length);
+          onTrackMetric.textContent = String(data.projects.filter(
+            (project) => project.status.toLowerCase() === "on-track"
+          ).length);
+          attentionMetric.textContent = String(data.projects.filter(
+            (project) => ["at-risk", "blocked"].includes(project.status.toLowerCase())
+          ).length);
+          content.setAttribute("aria-busy", "false");
+
+          if (data.projects.length === 0) {
+            caption.textContent = "No projects to display";
+            showState("empty", "No projects yet", "Project updates will appear here when they are available.");
+            return;
+          }
+
+          const grid = document.createElement("div");
+          grid.className = "projects-grid";
+          for (const project of data.projects) grid.append(makeProjectCard(project));
+          content.replaceChildren(grid);
+          caption.textContent = `${data.projects.length} ${data.projects.length === 1 ? "project" : "projects"} in view`;
+        } catch (error) {
+          content.setAttribute("aria-busy", "false");
+          caption.textContent = "Project updates unavailable";
+          showState("error", "Could not load projects", error.message);
+        }
+      }
+
+      loadProjects();
+    </script>
+  </body>
+</html>
